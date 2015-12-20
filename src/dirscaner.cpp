@@ -1,6 +1,10 @@
 #include "dirscaner.h"
 
+bool g_destroySelf = false;
+bool g_reloadCfg = false;
+
 DirScaner::DirScaner()
+    : m_config("")
 {
     // open syslog:
     openlog(IDENT, LOG_PID, LOG_DAEMON);
@@ -13,10 +17,12 @@ DirScaner::~DirScaner()
     closelog();
 }
 
-int DirScaner::loadConfig(const char *fileName)
+int DirScaner::loadConfig()
 {
     string line;
-    ifstream cfgFile(fileName);
+    ifstream cfgFile(m_config.c_str());
+
+    m_buffer.clear();
     if (cfgFile.is_open())
     {
         while (getline (cfgFile, line))
@@ -45,14 +51,15 @@ int DirScaner::loadConfig(const char *fileName)
 
 void DirScaner::signalHandler(int sig)
 {
+
     switch(sig) {
     case SIGHUP:
-        syslog(LOG_NOTICE, "hangup signal catched");
+        syslog(LOG_NOTICE, "SIGHUP signal catched");
+        g_reloadCfg = true;
         break;
     case SIGTERM:
-        syslog(LOG_NOTICE, "terminate signal catched");
-        // TODO destroy all childs
-        exit(0);
+        syslog(LOG_NOTICE, "SIGTERM signal catched");
+        g_destroySelf = true;
         break;
     }
 }
@@ -95,23 +102,23 @@ int DirScaner::scanDir(const char *str_dir, bool isInit)
             if(cit == m_map.end() && !isInit) {
                 syslog(LOG_INFO, "[MODIFY_CHECK] New file was found: %s\n", fullName.c_str());
                 m_map.insert( pair<string,long int>(fullName.c_str(), stbuf.st_mtime ) );
-            } else
+            } else {
                 if(stbuf.st_mtime != cit->second  && !isInit)
                 {
                     syslog(LOG_INFO, "[MODIFY_CHECK] File was modified: %s\n", fullName.c_str());
                     m_map[fullName] = stbuf.st_mtime;
                 } else
                     m_map.insert ( pair<string,long int>(fullName.c_str(), stbuf.st_mtime ) );
+            }
         }
-
     }
     closedir(dir);
     return 0;
 }
 
-int DirScaner::run() {
+int DirScaner::startProcesses()
+{
     int pid;
-    int index = -1;
 
     for(unsigned int i = 0; i < m_buffer.size(); i++) {
         pid = fork();
@@ -125,9 +132,7 @@ int DirScaner::run() {
         else if (!pid) // если мы потомок
         {
             syslog(LOG_INFO, "[run] Fork successful\n");
-            signal(SIGHUP, DirScaner::signalHandler);
-            signal(SIGTERM, DirScaner::signalHandler);
-            index = i;
+            return 1;
             break;
         }
         else // если мы родитель
@@ -135,27 +140,67 @@ int DirScaner::run() {
             m_childPID.push_back(pid);
         }
     }
-
-    if (!pid) // если мы потомок
-    {
-        bool isInit = true;
-        int status = 0;
-        while(true) {
-            status = scanDir(m_buffer[index].dirName.c_str(), isInit);
-            if(status)
-                break;
-            if(isInit) {
-                syslog(LOG_INFO, "[run] initial map successfull\n");
-                isInit = false;
-            }
-
-            sleep(m_buffer[index].mTime);
-        }
-        return status;
-    } else {
-        // бесконечный цикл работы
-        while(true){}
-    }
     return 0;
+}
+
+void DirScaner::destroyAllChildren()
+{
+    for(vector<int>::iterator i = m_childPID.begin(); i != m_childPID.end(); i++)
+       kill(*i, SIGTERM);
+    m_childPID.clear();
+}
+
+int DirScaner::run() {
+    int retVal;
+    bool reRun = false;
+    do {
+        retVal = startProcesses();
+
+        if (retVal > 0) // если мы потомок
+        {
+            bool isInit = true;
+            int status = 0;
+            while(true) {
+                status = scanDir(m_buffer[retVal].dirName.c_str(), isInit);
+                if(status)
+                    break;
+                if(isInit) {
+                    syslog(LOG_INFO, "[run] initial map successfull\n");
+                    isInit = false;
+                }
+
+                if(g_destroySelf) {
+                    exit(0);
+                }
+                sleep(m_buffer[retVal].mTime);
+            }
+            return status;
+        } else if(!retVal){
+            // бесконечный цикл работы
+            while(true)
+            {
+                pause();
+                if(g_destroySelf) {
+                    destroyAllChildren();
+                    exit(0);
+                }
+                if(g_reloadCfg){
+                    destroyAllChildren();
+                    loadConfig();
+                    g_reloadCfg = false;
+                    reRun = true;
+                    break;
+                }
+            }
+        }
+    } while(reRun);
+
+    return retVal;
+}
+
+int DirScaner::setConfig(const char *fileName)
+{
+    m_config = fileName;
+    return loadConfig();
 }
 

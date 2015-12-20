@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <unistd.h>
 #include <syslog.h>
 #include <signal.h>
 #include <dirent.h>
@@ -45,20 +46,28 @@ public:
     }
 
     // функция загрузки конфига
-    int loadConfig(const char* fileName);
+    int loadConfig();
 
     // функция обработки сигналов
     static void signalHandler(int sig);
 
     int scanDir(const char *str_dir, bool isInit);
 
+    int startProcesses();
+
+    void destroyAllChildren();
+
     int run();
+
+    int setConfig(const char* fileName);
 
 private:
     vector<f_info> m_buffer;
     vector<int> m_childPID;
 
     map<string, long int> m_map;
+
+    string m_config;
 };
 
 #endif // DIRSCANER_H

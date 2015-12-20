@@ -22,7 +22,7 @@ int main(int argc, char** argv)
     syslog(LOG_INFO, "[main] Start daemon\n");
 
     // загружаем файл конфигурации
-    status = scaner.loadConfig(argv[1]);
+    status = scaner.setConfig(argv[1]);
 
     if (status) // если произошла ошибка загрузки конфига
     {
@@ -43,6 +43,7 @@ int main(int argc, char** argv)
     else if (!pid) // если это потомок
     {
         syslog(LOG_INFO, "[WorkingLoop] Fork successful\n");
+
         // данный код уже выполняется в процессе потомка
         // разрешаем выставлять все биты прав на создаваемые файлы,
         // иначе у нас могут быть проблемы с правами доступа
@@ -53,6 +54,7 @@ int main(int argc, char** argv)
 
         signal(SIGHUP, DirScaner::signalHandler);
         signal(SIGTERM, DirScaner::signalHandler);
+        signal(SIGCHLD, SIG_IGN);
         // переходим в корень диска, если мы этого не сделаем, то могут быть проблемы.
         // к примеру с размантированием дисков
         chdir("/");
