@@ -30,11 +30,16 @@ int DirScaner::loadConfig()
             vector<string> sVec;
             sVec = split(line, ' ');
             string dirStr = sVec[0];
-            string timeStr = sVec[1];
+            for(int k = 1; k < sVec.size()-1; k++) {
+                dirStr += ' ';
+                dirStr += sVec[k];
+            }
+            string timeStr = sVec[sVec.size()-1];
 
             long int time = strtol(timeStr.c_str(), NULL, 10);
             if(time == 0)
                 time = 60;
+            syslog(LOG_NOTICE, "[LoadConfig] Check %s every %d sec.\n", dirStr.c_str(), time);
             f_info i;
             i.dirName = dirStr;
             i.mTime = time;
@@ -43,7 +48,7 @@ int DirScaner::loadConfig()
         cfgFile.close();
     }
     else {
-        syslog(LOG_ERR, "[MONITOR] Open config failed (%s)\n", strerror(errno));
+        syslog(LOG_ERR, "[LoadConfig] Open config failed (%s)\n", strerror(errno));
         return -1;
     }
     return 0;
@@ -69,6 +74,9 @@ int DirScaner::scanDir(const char *str_dir, bool isInit)
     struct dirent *entry;
     DIR * dir;
     struct stat stbuf;
+
+    if(str_dir == NULL)
+        return 0;
 
     if(isInit) {
         syslog(LOG_INFO, "[ScanDir] Entering to %s...\n", str_dir);
@@ -127,20 +135,19 @@ int DirScaner::startProcesses()
         {
             // запишем в лог сообщение об этом
             syslog(LOG_INFO, "[run] Fork failed (Can't create thread)\n");
-            return -1;
+            return -255;
         }
         else if (!pid) // если мы потомок
         {
             syslog(LOG_INFO, "[run] Fork successful\n");
-            return 1;
-            break;
+            return i;
         }
         else // если мы родитель
         {
             m_childPID.push_back(pid);
         }
     }
-    return 0;
+    return -1;
 }
 
 void DirScaner::destroyAllChildren()
@@ -156,7 +163,8 @@ int DirScaner::run() {
     do {
         retVal = startProcesses();
 
-        if (retVal > 0) // если мы потомок
+        syslog(LOG_INFO, "[run] retval %d\n", retVal);
+        if (retVal >= 0) // если мы потомок
         {
             bool isInit = true;
             int status = 0;
@@ -172,10 +180,10 @@ int DirScaner::run() {
                 if(g_destroySelf) {
                     exit(0);
                 }
-                sleep(m_buffer[retVal].mTime);
+                sleep(m_buffer[retVal-1].mTime);
             }
             return status;
-        } else if(!retVal){
+        } else if(retVal == -1){
             // бесконечный цикл работы
             while(true)
             {
